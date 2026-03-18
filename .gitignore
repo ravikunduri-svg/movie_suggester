@@ -1,0 +1,19 @@
+# IMDb raw files — too large for git
+imdb_data/
+
+# Collected feedback — keep private
+data/feedback.csv
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
