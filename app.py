@@ -129,7 +129,7 @@ with tab_search:
             if genre != "Any":
                 mask &= df_all["genres"].str.contains(genre, na=False)
             lang_code = LANGUAGES[language]
-            if lang_code:
+            if lang_code and "language" in df_all.columns:
                 mask &= df_all["language"] == lang_code
 
             st.session_state.results = df_all[mask].sort_values("averageRating", ascending=False)
