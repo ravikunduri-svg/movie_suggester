@@ -21,19 +21,48 @@ GENRES = [
     "Music", "Mystery", "Romance", "Sci-Fi", "Sport", "Thriller", "War", "Western",
 ]
 
+MOOD_GENRES = {
+    "😂 Laugh":        ["Comedy", "Animation"],
+    "😨 Thrill":       ["Thriller", "Horror", "Mystery"],
+    "🥺 Feel Things":  ["Drama", "Romance"],
+    "🚀 Adventure":    ["Action", "Adventure", "Sci-Fi"],
+    "🧠 Think":        ["Documentary", "Biography", "History"],
+    "✨ Wonder":       ["Fantasy", "Animation", "Family"],
+    "💥 Intensity":    ["Crime", "War", "Action"],
+}
+
+QUIZ_ERA = {
+    "🕰️ Classic (before 1990)": (1900, 1989),
+    "📼 90s–00s":               (1990, 2009),
+    "📱 Modern (2010–now)":     (2010, 2025),
+    "🎲 Any era":               (1900, 2025),
+}
+
+QUIZ_POPULARITY = {
+    "🌍 Blockbusters only": 100_000,
+    "👥 Well-known":         10_000,
+    "🔍 Hidden gems":           500,
+}
+
+QUIZ_QUALITY = {
+    "🏆 Only the best (8.0+)": 8.0,
+    "👍 Good is enough (7.0+)": 7.0,
+    "🎲 Surprise me (6.0+)":    6.0,
+}
+
 LANGUAGES = {
-    "Any":      None,
-    "English":  "en",
-    "French":   "fr",
-    "Spanish":  "es",
-    "Italian":  "it",
-    "Japanese": "ja",
-    "German":   "de",
-    "Hindi":    "hi",
-    "Russian":  "ru",
-    "Tamil":    "ta",
-    "Korean":   "ko",
-    "Telugu":   "te",
+    "Any":       None,
+    "English":   "en",
+    "French":    "fr",
+    "Spanish":   "es",
+    "Italian":   "it",
+    "Japanese":  "ja",
+    "German":    "de",
+    "Hindi":     "hi",
+    "Russian":   "ru",
+    "Tamil":     "ta",
+    "Korean":    "ko",
+    "Telugu":    "te",
     "Malayalam": "ml",
 }
 
@@ -62,13 +91,56 @@ with st.spinner("Loading movie database…"):
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
-for k, v in {"results": None, "page": 1}.items():
+for k, v in {"results": None, "page": 1, "fy_results": None, "fy_page": 1}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_search, tab_feedback = st.tabs(["🎬 Movies", "💬 Feedback"])
+tab_search, tab_foryou, tab_feedback = st.tabs(["🎬 Movies", "✨ For You", "💬 Feedback"])
+
+# ── Shared results renderer ───────────────────────────────────────────────────
+
+def render_results(df: pd.DataFrame | None, page_key: str = "page") -> None:
+    if df is None:
+        return
+    if df.empty:
+        st.warning("No movies found. Try adjusting your filters.")
+        return
+
+    page_df = df.head(st.session_state[page_key] * PAGE_SIZE)
+    st.markdown(f"Showing **{len(page_df):,}** of **{len(df):,}** results")
+
+    rows = [
+        {
+            "Title":     m["primaryTitle"],
+            "Year":      int(m["startYear"]),
+            "Rating ⭐": round(m["averageRating"], 1),
+            "Votes":     int(m["numVotes"]),
+            "Genres":    m["genres"].replace(",", ", "),
+            "Language":  LANG_CODE_TO_NAME.get(m.get("language"), m.get("language") or "—"),
+            "IMDb":      f"https://www.imdb.com/title/{m['tconst']}/",
+        }
+        for _, m in page_df.iterrows()
+    ]
+
+    st.dataframe(
+        rows,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Rating ⭐": st.column_config.NumberColumn(format="%.1f"),
+            "Votes":     st.column_config.NumberColumn(format="%,d"),
+            "IMDb":      st.column_config.LinkColumn(display_text="View on IMDb"),
+        },
+    )
+
+    if len(page_df) < len(df):
+        if st.button("Load 20 more", key=f"load_more_{page_key}"):
+            st.session_state[page_key] += 1
+            st.rerun()
+    else:
+        st.caption("You've reached the end of the results.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — MOVIE SEARCH
@@ -130,47 +202,75 @@ with tab_search:
     if st.session_state.results is None:
         st.info("Set your filters in the sidebar and click **Search** to find movies.")
     else:
-        results: pd.DataFrame = st.session_state.results
-
-        if results.empty:
-            st.warning("No movies found. Try adjusting your filters.")
-        else:
-            page_df = results.head(st.session_state.page * PAGE_SIZE)
-            st.markdown(f"Showing **{len(page_df):,}** of **{len(results):,}** results")
-
-            rows = [
-                {
-                    "Title":     m["primaryTitle"],
-                    "Year":      int(m["startYear"]),
-                    "Rating ⭐": round(m["averageRating"], 1),
-                    "Votes":     int(m["numVotes"]),
-                    "Genres":    m["genres"].replace(",", ", "),
-                    "Language":  LANG_CODE_TO_NAME.get(m.get("language"), m.get("language") or "—"),
-                    "IMDb":      f"https://www.imdb.com/title/{m['tconst']}/",
-                }
-                for _, m in page_df.iterrows()
-            ]
-
-            st.dataframe(
-                rows,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Rating ⭐": st.column_config.NumberColumn(format="%.1f"),
-                    "Votes":     st.column_config.NumberColumn(format="%,d"),
-                    "IMDb":      st.column_config.LinkColumn(display_text="View on IMDb"),
-                },
-            )
-
-            if len(page_df) < len(results):
-                if st.button("Load 20 more"):
-                    st.session_state.page += 1
-                    st.rerun()
-            else:
-                st.caption("You've reached the end of the results.")
+        render_results(st.session_state.results, page_key="page")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — FEEDBACK
+# TAB 2 — FOR YOU
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab_foryou:
+    st.title("✨ For You")
+    st.caption("Tell us your mood and we'll find your perfect movie.")
+
+    # ── Mood selector ──────────────────────────────────────────────────────────
+
+    st.subheader("How are you feeling right now?")
+    mood = st.radio(
+        "mood",
+        options=list(MOOD_GENRES.keys()),
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+
+    # ── Personality quiz ───────────────────────────────────────────────────────
+
+    st.subheader("Three quick questions")
+
+    col_q1, col_q2, col_q3 = st.columns(3)
+    with col_q1:
+        era_choice = st.radio("When from?", list(QUIZ_ERA.keys()))
+    with col_q2:
+        pop_choice = st.radio("How mainstream?", list(QUIZ_POPULARITY.keys()))
+    with col_q3:
+        qual_choice = st.radio("Quality bar?", list(QUIZ_QUALITY.keys()))
+
+    st.divider()
+
+    find_btn = st.button("✨ Find My Movies", type="primary", use_container_width=True)
+
+    if find_btn:
+        genres              = MOOD_GENRES[mood]
+        year_from_fy, year_to_fy = QUIZ_ERA[era_choice]
+        min_votes_fy        = QUIZ_POPULARITY[pop_choice]
+        min_rating_fy       = QUIZ_QUALITY[qual_choice]
+
+        def _build_mask(rating: float) -> pd.Series:
+            return (
+                (df_all["averageRating"] >= rating) &
+                (df_all["numVotes"]      >= min_votes_fy) &
+                (df_all["startYear"]     >= year_from_fy) &
+                (df_all["startYear"]     <= year_to_fy) &
+                (df_all["genres"].str.contains("|".join(genres), na=False))
+            )
+
+        filtered = df_all[_build_mask(min_rating_fy)].sort_values("averageRating", ascending=False)
+
+        # Auto-relax rating threshold once if no results
+        if filtered.empty and min_rating_fy > 6.0:
+            relaxed = min_rating_fy - 1.0
+            filtered = df_all[_build_mask(relaxed)].sort_values("averageRating", ascending=False)
+            if not filtered.empty:
+                st.info(f"No exact matches at {min_rating_fy}+ — showing {relaxed}+ instead.")
+
+        st.session_state.fy_results = filtered
+        st.session_state.fy_page = 1
+
+    render_results(st.session_state.fy_results, page_key="fy_page")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — FEEDBACK
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_feedback:
