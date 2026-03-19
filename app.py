@@ -4,9 +4,12 @@ Run: streamlit run app.py
 """
 
 import csv
+import json
+import os
 from datetime import datetime
 from pathlib import Path
 
+import anthropic
 import pandas as pd
 import streamlit as st
 
@@ -76,6 +79,8 @@ OTT_PLATFORMS = [
 
 OTT_FILE = Path(__file__).parent / "data" / "ott_catalog.parquet"
 
+_ANTHROPIC_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY", ""))
+
 PAGE_SIZE = 20
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -107,15 +112,68 @@ df_ott = load_ott_data()
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for k, v in {"results": None, "page": 1, "fy_results": None, "fy_page": 1,
-             "ott_results": None, "ott_page": 1}.items():
+             "ott_results": None, "ott_page": 1, "cast_result": None}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_search, tab_foryou, tab_ott, tab_feedback = st.tabs(
-    ["🎬 Movies", "✨ For You", "📺 Streaming", "💬 Feedback"]
+tab_search, tab_foryou, tab_ott, tab_cast, tab_feedback = st.tabs(
+    ["🎬 Movies", "✨ For You", "📺 Streaming", "🎭 Cast AI", "💬 Feedback"]
 )
+
+# ── Cast prediction ───────────────────────────────────────────────────────────
+
+def get_cast_prediction(story: str, genre: str, language: str, era: str) -> dict:
+    """Call Claude to predict cast. Returns parsed JSON dict."""
+    hints = []
+    if genre != "Any":
+        hints.append(f"Genre: {genre}")
+    if language != "Any":
+        hints.append(f"Language/Region: {language}")
+    if era != "Any":
+        hints.append(f"Era: {era}")
+    hint_text = "\n".join(hints) if hints else "No additional hints."
+
+    prompt = f"""You are a world-class film casting director.
+Given the story below, suggest an ideal cast for a film adaptation.
+{hint_text}
+
+Story:
+{story}
+
+Respond with ONLY valid JSON in this exact structure:
+{{
+  "suggested_title": "A short working title",
+  "genre": "Genre(s) of this film",
+  "tone": "2-4 word tone descriptor",
+  "director": {{
+    "name": "Director Name",
+    "reason": "One sentence why"
+  }},
+  "cast": [
+    {{"role": "Lead Actor", "actor": "Name", "reason": "One sentence why"}},
+    {{"role": "Lead Actress", "actor": "Name", "reason": "One sentence why"}},
+    {{"role": "Supporting 1", "actor": "Name", "reason": "One sentence why"}},
+    {{"role": "Supporting 2", "actor": "Name", "reason": "One sentence why"}},
+    {{"role": "Supporting 3", "actor": "Name", "reason": "One sentence why"}}
+  ],
+  "overall_reasoning": "2-3 sentence summary of casting vision"
+}}"""
+
+    client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY)
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = response.content[0].text.strip()
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return json.loads(raw.strip())
 
 # ── Shared results renderer ───────────────────────────────────────────────────
 
@@ -372,7 +430,88 @@ with tab_ott:
                            extra_cols=["platforms"])
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — FEEDBACK
+# TAB 4 — CAST AI
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab_cast:
+    st.title("🎭 Cast Predictor")
+    st.caption("Describe your story — AI will suggest the perfect cast.")
+
+    if not _ANTHROPIC_KEY:
+        st.error(
+            "Anthropic API key not found. "
+            "Add `ANTHROPIC_API_KEY` to `.streamlit/secrets.toml` or set it as an env var."
+        )
+    else:
+        # ── Inputs ─────────────────────────────────────────────────────────
+        story = st.text_area(
+            "Your story *",
+            height=180,
+            placeholder=(
+                "e.g. A grieving father in rural India seeks revenge after his "
+                "daughter is kidnapped by a local crime syndicate..."
+            ),
+            key="cast_story",
+        )
+
+        hc1, hc2, hc3 = st.columns(3)
+        with hc1:
+            cast_genre = st.selectbox("Genre hint", GENRES, key="cast_genre")
+        with hc2:
+            cast_language = st.selectbox("Language / Region", list(LANGUAGES.keys()), key="cast_lang")
+        with hc3:
+            cast_era = st.selectbox(
+                "Era", ["Any", "Classic (pre-1990)", "90s–2000s", "Modern (2010+)"],
+                key="cast_era",
+            )
+
+        predict_btn = st.button(
+            "🎬 Predict Cast", type="primary", use_container_width=True
+        )
+
+        if predict_btn:
+            if not story.strip():
+                st.warning("Please enter a story description.")
+            else:
+                with st.spinner("Casting in progress…"):
+                    try:
+                        result = get_cast_prediction(
+                            story.strip(), cast_genre, cast_language, cast_era
+                        )
+                        st.session_state.cast_result = result
+                    except Exception as exc:
+                        st.error(f"Prediction failed: {exc}")
+                        st.session_state.cast_result = None
+
+        # ── Results ────────────────────────────────────────────────────────
+        res = st.session_state.cast_result
+        if res is None:
+            st.info("Enter your story and click **Predict Cast**.")
+        else:
+            st.markdown(
+                f"### {res.get('suggested_title', 'Untitled')}"
+                f"  &nbsp; `{res.get('genre', '')}` &nbsp; · &nbsp; _{res.get('tone', '')}_"
+            )
+            st.divider()
+
+            st.subheader("Suggested Cast")
+            cast_rows = [
+                {"Role": c["role"], "Actor / Actress": c["actor"], "Why": c["reason"]}
+                for c in res.get("cast", [])
+            ]
+            st.dataframe(cast_rows, use_container_width=True, hide_index=True)
+
+            director = res.get("director", {})
+            st.markdown(
+                f"**Director:** {director.get('name', '—')}  \n"
+                f"_{director.get('reason', '')}_"
+            )
+            st.divider()
+
+            st.markdown(f"**Casting vision:** {res.get('overall_reasoning', '')}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — FEEDBACK
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_feedback:
