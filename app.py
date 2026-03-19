@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from google import genai
+from groq import Groq
 import pandas as pd
 import streamlit as st
 
@@ -79,7 +79,7 @@ OTT_PLATFORMS = [
 
 OTT_FILE = Path(__file__).parent / "data" / "ott_catalog.parquet"
 
-_GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
+_GROQ_KEY = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY", ""))
 
 PAGE_SIZE = 20
 
@@ -161,9 +161,13 @@ Respond with ONLY valid JSON in this exact structure:
   "overall_reasoning": "2-3 sentence summary of casting vision"
 }}"""
 
-    client = genai.Client(api_key=_GEMINI_KEY)
-    response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-    raw = response.text.strip()
+    client = Groq(api_key=_GROQ_KEY)
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=1024,
+    )
+    raw = response.choices[0].message.content.strip()
     # Strip markdown code fences if present
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -433,10 +437,10 @@ with tab_cast:
     st.title("🎭 Cast Predictor")
     st.caption("Describe your story — AI will suggest the perfect cast.")
 
-    if not _GEMINI_KEY:
+    if not _GROQ_KEY:
         st.error(
-            "Gemini API key not found. "
-            "Add `GEMINI_API_KEY` to `.streamlit/secrets.toml` or set it as an env var."
+            "Groq API key not found. "
+            "Add `GROQ_API_KEY` to `.streamlit/secrets.toml` or set it as an env var."
         )
     else:
         # ── Inputs ─────────────────────────────────────────────────────────
