@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
+import google.generativeai as genai
 import pandas as pd
 import streamlit as st
 
@@ -79,7 +79,7 @@ OTT_PLATFORMS = [
 
 OTT_FILE = Path(__file__).parent / "data" / "ott_catalog.parquet"
 
-_ANTHROPIC_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY", ""))
+_GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
 
 PAGE_SIZE = 20
 
@@ -125,7 +125,7 @@ tab_search, tab_foryou, tab_ott, tab_cast, tab_feedback = st.tabs(
 # ── Cast prediction ───────────────────────────────────────────────────────────
 
 def get_cast_prediction(story: str, genre: str, language: str, era: str) -> dict:
-    """Call Claude to predict cast. Returns parsed JSON dict."""
+    """Call Gemini to predict cast. Returns parsed JSON dict."""
     hints = []
     if genre != "Any":
         hints.append(f"Genre: {genre}")
@@ -161,13 +161,10 @@ Respond with ONLY valid JSON in this exact structure:
   "overall_reasoning": "2-3 sentence summary of casting vision"
 }}"""
 
-    client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY)
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = response.content[0].text.strip()
+    genai.configure(api_key=_GEMINI_KEY)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+    response = model.generate_content(prompt)
+    raw = response.text.strip()
     # Strip markdown code fences if present
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -437,10 +434,10 @@ with tab_cast:
     st.title("🎭 Cast Predictor")
     st.caption("Describe your story — AI will suggest the perfect cast.")
 
-    if not _ANTHROPIC_KEY:
+    if not _GEMINI_KEY:
         st.error(
-            "Anthropic API key not found. "
-            "Add `ANTHROPIC_API_KEY` to `.streamlit/secrets.toml` or set it as an env var."
+            "Gemini API key not found. "
+            "Add `GEMINI_API_KEY` to `.streamlit/secrets.toml` or set it as an env var."
         )
     else:
         # ── Inputs ─────────────────────────────────────────────────────────
