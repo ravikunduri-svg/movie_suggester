@@ -69,6 +69,13 @@ LANGUAGES = {
 # Reverse lookup for human-readable display in results table
 LANG_CODE_TO_NAME = {code: name for name, code in LANGUAGES.items() if code}
 
+OTT_PLATFORMS = [
+    "Netflix", "Prime Video", "JioHotstar",
+    "SonyLIV", "Zee5", "Aha", "MX Player", "Lionsgate Play",
+]
+
+OTT_FILE = Path(__file__).parent / "data" / "ott_catalog.parquet"
+
 PAGE_SIZE = 20
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -86,22 +93,33 @@ st.set_page_config(
 def load_data() -> pd.DataFrame:
     return pd.read_parquet(DATA_FILE)
 
+@st.cache_data(show_spinner=False)
+def load_ott_data() -> pd.DataFrame | None:
+    if not OTT_FILE.exists():
+        return None
+    return pd.read_parquet(OTT_FILE)
+
 with st.spinner("Loading movie database…"):
     df_all = load_data()
 
+df_ott = load_ott_data()
+
 # ── Session state ─────────────────────────────────────────────────────────────
 
-for k, v in {"results": None, "page": 1, "fy_results": None, "fy_page": 1}.items():
+for k, v in {"results": None, "page": 1, "fy_results": None, "fy_page": 1,
+             "ott_results": None, "ott_page": 1}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_search, tab_foryou, tab_feedback = st.tabs(["🎬 Movies", "✨ For You", "💬 Feedback"])
+tab_search, tab_foryou, tab_ott, tab_feedback = st.tabs(
+    ["🎬 Movies", "✨ For You", "📺 Streaming", "💬 Feedback"]
+)
 
 # ── Shared results renderer ───────────────────────────────────────────────────
 
-def render_results(df: pd.DataFrame | None, page_key: str = "page") -> None:
+def render_results(df: pd.DataFrame | None, page_key: str = "page", extra_cols: list | None = None) -> None:
     if df is None:
         return
     if df.empty:
@@ -119,6 +137,7 @@ def render_results(df: pd.DataFrame | None, page_key: str = "page") -> None:
             "Votes":     int(m["numVotes"]),
             "Genres":    m["genres"].replace(",", ", "),
             "Language":  LANG_CODE_TO_NAME.get(m.get("language"), m.get("language") or "—"),
+            **( {"Platforms": m.get("platforms") or "—"} if extra_cols and "platforms" in extra_cols else {} ),
             "IMDb":      f"https://www.imdb.com/title/{m['tconst']}/",
         }
         for _, m in page_df.iterrows()
@@ -270,7 +289,90 @@ with tab_foryou:
     render_results(st.session_state.fy_results, page_key="fy_page")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — FEEDBACK
+# TAB 3 — STREAMING NOW
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab_ott:
+    st.title("📺 Streaming Now")
+    st.caption("Find movies available on your favourite OTT platforms.")
+
+    if df_ott is None:
+        st.warning(
+            "OTT dataset not built yet. "
+            "Run `python scripts/build_ott_dataset.py` to generate it."
+        )
+    else:
+        # ── Filters (inline, 2-column layout) ──────────────────────────────
+        col_plat, col_filters = st.columns([2, 3])
+
+        with col_plat:
+            st.subheader("Platforms")
+            selected_platforms = [
+                p for p in OTT_PLATFORMS
+                if st.checkbox(p, value=True, key=f"ott_{p}")
+            ]
+
+        with col_filters:
+            st.subheader("Filters")
+            cf1, cf2 = st.columns(2)
+            with cf1:
+                ott_genre    = st.selectbox("Genre", GENRES, key="ott_genre")
+                ott_language = st.selectbox("Language", list(LANGUAGES.keys()), key="ott_lang")
+            with cf2:
+                ott_rating = st.select_slider(
+                    "Min Rating", options=[5.0, 6.0, 7.0, 7.5, 8.0, 8.5],
+                    value=7.0, format_func=lambda x: f"⭐ {x}", key="ott_rating"
+                )
+                ott_votes = st.select_slider(
+                    "Min Votes", options=[100, 500, 1_000, 5_000, 10_000, 50_000],
+                    value=1_000, format_func=lambda x: f"{x:,}", key="ott_votes"
+                )
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                ott_year_from = st.number_input("From Year", 1900, 2025, 2000, key="ott_yf")
+            with cc2:
+                ott_year_to   = st.number_input("To Year", 1900, 2025, 2025, key="ott_yt")
+
+        ott_search_btn = st.button("🔍 Search Streaming", type="primary", use_container_width=True)
+
+        if ott_search_btn:
+            if not selected_platforms:
+                st.warning("Select at least one platform.")
+            elif ott_year_to < ott_year_from:
+                st.error("'To Year' must be >= 'From Year'.")
+            else:
+                pat = "|".join(selected_platforms)
+                ott_mask = df_ott["platforms"].str.contains(pat, na=False)
+                matched_tconsts = df_ott[ott_mask]["tconst"]
+
+                mask = (
+                    (df_all["tconst"].isin(matched_tconsts)) &
+                    (df_all["averageRating"] >= ott_rating) &
+                    (df_all["numVotes"]      >= ott_votes) &
+                    (df_all["startYear"]     >= int(ott_year_from)) &
+                    (df_all["startYear"]     <= int(ott_year_to))
+                )
+                if ott_genre != "Any":
+                    mask &= df_all["genres"].str.contains(ott_genre, na=False)
+                ott_lang_code = LANGUAGES[ott_language]
+                if ott_lang_code and "language" in df_all.columns:
+                    mask &= df_all["language"] == ott_lang_code
+
+                result = df_all[mask].merge(
+                    df_ott[["tconst", "platforms"]], on="tconst", how="left"
+                ).sort_values("averageRating", ascending=False)
+
+                st.session_state.ott_results = result
+                st.session_state.ott_page = 1
+
+        if st.session_state.ott_results is None:
+            st.info("Select platforms and filters, then click **Search Streaming**.")
+        else:
+            render_results(st.session_state.ott_results, page_key="ott_page",
+                           extra_cols=["platforms"])
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — FEEDBACK
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_feedback:
