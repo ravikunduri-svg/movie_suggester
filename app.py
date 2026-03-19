@@ -22,31 +22,23 @@ GENRES = [
 ]
 
 LANGUAGES = {
-    "Any":        None,
-    # Indian languages
-    "Hindi":      "hi",
-    "Tamil":      "ta",
-    "Telugu":     "te",
-    "Malayalam":  "ml",
-    "Kannada":    "kn",
-    "Bengali":    "bn",
-    "Marathi":    "mr",
-    "Punjabi":    "pa",
-    # International
-    "English":    "en",
-    "Spanish":    "es",
-    "French":     "fr",
-    "German":     "de",
-    "Italian":    "it",
-    "Portuguese": "pt",
-    "Japanese":   "ja",
-    "Korean":     "ko",
-    "Chinese":    "zh",
-    "Arabic":     "ar",
-    "Turkish":    "tr",
-    "Russian":    "ru",
-    "Persian":    "fa",
+    "Any":      None,
+    "English":  "en",
+    "French":   "fr",
+    "Spanish":  "es",
+    "Italian":  "it",
+    "Japanese": "ja",
+    "German":   "de",
+    "Hindi":    "hi",
+    "Russian":  "ru",
+    "Tamil":    "ta",
+    "Korean":   "ko",
+    "Telugu":   "te",
+    "Malayalam": "ml",
 }
+
+# Reverse lookup for human-readable display in results table
+LANG_CODE_TO_NAME = {code: name for name, code in LANGUAGES.items() if code}
 
 PAGE_SIZE = 20
 
@@ -153,7 +145,7 @@ with tab_search:
                     "Rating ⭐": round(m["averageRating"], 1),
                     "Votes":     int(m["numVotes"]),
                     "Genres":    m["genres"].replace(",", ", "),
-                    "Language":  m.get("language", "—"),
+                    "Language":  LANG_CODE_TO_NAME.get(m.get("language"), m.get("language") or "—"),
                     "IMDb":      f"https://www.imdb.com/title/{m['tconst']}/",
                 }
                 for _, m in page_df.iterrows()
