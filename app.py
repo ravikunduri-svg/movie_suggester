@@ -167,13 +167,9 @@ Respond with ONLY valid JSON in this exact structure:
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=1024,
+        response_format={"type": "json_object"},
     )
-    raw = response.choices[0].message.content.strip()
-    # Extract the first {...} block — handles fences, preamble, and trailing text
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        raise ValueError(f"No JSON object found in response:\n{raw}")
-    return json.loads(match.group())
+    return json.loads(response.choices[0].message.content)
 
 # ── Shared results renderer ───────────────────────────────────────────────────
 
