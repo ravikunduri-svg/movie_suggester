@@ -6,6 +6,7 @@ Run: streamlit run app.py
 import csv
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -168,12 +169,11 @@ Respond with ONLY valid JSON in this exact structure:
         max_tokens=1024,
     )
     raw = response.choices[0].message.content.strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
+    # Extract the first {...} block — handles fences, preamble, and trailing text
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        raise ValueError(f"No JSON object found in response:\n{raw}")
+    return json.loads(match.group())
 
 # ── Shared results renderer ───────────────────────────────────────────────────
 
