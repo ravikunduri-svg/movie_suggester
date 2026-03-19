@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import google.generativeai as genai
+from google import genai
 import pandas as pd
 import streamlit as st
 
@@ -161,9 +161,8 @@ Respond with ONLY valid JSON in this exact structure:
   "overall_reasoning": "2-3 sentence summary of casting vision"
 }}"""
 
-    genai.configure(api_key=_GEMINI_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    response = model.generate_content(prompt)
+    client = genai.Client(api_key=_GEMINI_KEY)
+    response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
     raw = response.text.strip()
     # Strip markdown code fences if present
     if raw.startswith("```"):
