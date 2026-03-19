@@ -21,6 +21,33 @@ GENRES = [
     "Music", "Mystery", "Romance", "Sci-Fi", "Sport", "Thriller", "War", "Western",
 ]
 
+LANGUAGES = {
+    "Any":        None,
+    # Indian languages
+    "Hindi":      "hi",
+    "Tamil":      "ta",
+    "Telugu":     "te",
+    "Malayalam":  "ml",
+    "Kannada":    "kn",
+    "Bengali":    "bn",
+    "Marathi":    "mr",
+    "Punjabi":    "pa",
+    # International
+    "English":    "en",
+    "Spanish":    "es",
+    "French":     "fr",
+    "German":     "de",
+    "Italian":    "it",
+    "Portuguese": "pt",
+    "Japanese":   "ja",
+    "Korean":     "ko",
+    "Chinese":    "zh",
+    "Arabic":     "ar",
+    "Turkish":    "tr",
+    "Russian":    "ru",
+    "Persian":    "fa",
+}
+
 PAGE_SIZE = 20
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -59,11 +86,12 @@ with tab_search:
     st.title("🎬 Movie Suggester")
     st.caption(f"Powered by IMDb Non-Commercial Datasets · {len(df_all):,} movies indexed")
 
-    # Sidebar filters
     with st.sidebar:
         st.header("Search Filters")
 
         genre = st.selectbox("Genre", GENRES)
+
+        language = st.selectbox("Language", list(LANGUAGES.keys()))
 
         min_rating = st.select_slider(
             "Minimum Rating",
@@ -88,10 +116,9 @@ with tab_search:
         st.divider()
         search_btn = st.button("🔍 Search", use_container_width=True, type="primary")
 
-    # Search logic
     if search_btn:
         if year_to < year_from:
-            st.sidebar.error("'To Year' must be ≥ 'From Year'.")
+            st.sidebar.error("'To Year' must be >= 'From Year'.")
         else:
             mask = (
                 (df_all["averageRating"] >= min_rating) &
@@ -101,11 +128,13 @@ with tab_search:
             )
             if genre != "Any":
                 mask &= df_all["genres"].str.contains(genre, na=False)
+            lang_code = LANGUAGES[language]
+            if lang_code:
+                mask &= df_all["language"] == lang_code
 
             st.session_state.results = df_all[mask].sort_values("averageRating", ascending=False)
             st.session_state.page = 1
 
-    # Results
     if st.session_state.results is None:
         st.info("Set your filters in the sidebar and click **Search** to find movies.")
     else:
@@ -124,6 +153,7 @@ with tab_search:
                     "Rating ⭐": round(m["averageRating"], 1),
                     "Votes":     int(m["numVotes"]),
                     "Genres":    m["genres"].replace(",", ", "),
+                    "Language":  m.get("language", "—"),
                     "IMDb":      f"https://www.imdb.com/title/{m['tconst']}/",
                 }
                 for _, m in page_df.iterrows()
@@ -165,7 +195,7 @@ with tab_feedback:
             "What's this about?",
             ["Feature request", "Bug report", "UI/UX suggestion", "Other"],
         )
-        message = st.text_area("Your message *", height=120, placeholder="Tell me what you'd like to see…")
+        message = st.text_area("Your message *", height=120, placeholder="Tell me what you'd like to see...")
         submit  = st.form_submit_button("Send Feedback", type="primary", use_container_width=True)
 
     if submit:
