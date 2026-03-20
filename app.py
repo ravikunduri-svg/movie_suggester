@@ -113,7 +113,9 @@ df_ott = load_ott_data()
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for k, v in {"results": None, "page": 1, "fy_results": None, "fy_page": 1,
-             "ott_results": None, "ott_page": 1, "cast_result": None}.items():
+             "ott_results": None, "ott_page": 1,
+             "ott_lookup_results": None,
+             "cast_result": None}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -349,6 +351,47 @@ with tab_foryou:
 with tab_ott:
     st.title("📺 Streaming Now")
     st.caption("Find movies available on your favourite OTT platforms.")
+
+    # ── Movie Lookup ────────────────────────────────────────────────────────────
+    st.subheader("🔎 Find a Movie on OTT")
+    lk_col, btn_col = st.columns([4, 1])
+    with lk_col:
+        lookup_title = st.text_input(
+            "Movie name", placeholder="e.g. Interstellar", label_visibility="collapsed",
+            key="ott_lookup_title"
+        )
+    with btn_col:
+        lookup_btn = st.button("Find", type="primary", use_container_width=True, key="ott_lookup_btn")
+
+    if lookup_btn:
+        if not lookup_title.strip():
+            st.warning("Enter a movie name to search.")
+        else:
+            hits = df_all[
+                df_all["primaryTitle"].str.contains(lookup_title.strip(), case=False, na=False)
+            ].merge(df_ott[["tconst", "platforms"]], on="tconst", how="left") \
+             .sort_values("numVotes", ascending=False) \
+             .head(10)
+            st.session_state.ott_lookup_results = hits
+
+    if st.session_state.ott_lookup_results is not None:
+        hits = st.session_state.ott_lookup_results
+        if hits.empty:
+            st.info("No movies found matching that title.")
+        else:
+            for _, row in hits.iterrows():
+                platforms = row.get("platforms")
+                if pd.isna(platforms) or not platforms:
+                    badge = "❌ Not on any tracked platform"
+                else:
+                    badge = "✅ " + str(platforms)
+                st.markdown(
+                    f"**{row['primaryTitle']}** ({int(row['startYear'])}) "
+                    f"⭐ {row['averageRating']} &nbsp;·&nbsp; {badge}"
+                )
+
+    st.divider()
+    # ── Platform-browse section ──────────────────────────────────────────────────
 
     if df_ott is None:
         st.warning(
