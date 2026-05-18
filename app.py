@@ -103,37 +103,6 @@ _JW_HEADERS = {
     "Referer":      "https://www.justwatch.com/",
 }
 
-_JW_NEWEST_QUERY = """
-query GetNewestOTT(
-  $country: Country!
-  $language: Language!
-  $first: Int!
-  $offerFilter: OfferFilter!
-) {
-  popularTitles(
-    country: $country
-    language: $language
-    first: $first
-    sortBy: NEWEST
-    sortRandomSeed: 0
-    filter: { objectTypes: [MOVIE] }
-  ) {
-    edges {
-      node {
-        content(country: $country, language: $language) {
-          title
-          originalReleaseYear
-          externalIds { imdbId }
-        }
-        offers(country: $country, platform: WEB, filter: $offerFilter) {
-          package { clearName }
-        }
-      }
-    }
-  }
-}
-"""
-
 _JW_SEARCH_QUERY = """
 query SearchOTT(
   $country: Country!
@@ -217,16 +186,6 @@ def _jw_edges_to_rows(edges: list, df_imdb: pd.DataFrame) -> list[dict]:
     return rows
 
 @st.cache_data(ttl=10800, show_spinner=False)
-def fetch_jw_newest(fetch_count: int) -> list:
-    data = _jw_post(_JW_NEWEST_QUERY, {
-        "country":     "IN",
-        "language":    "en",
-        "first":       fetch_count,
-        "offerFilter": _JW_OFFER_FILTER,
-    })
-    return (data or {}).get("data", {}).get("popularTitles", {}).get("edges", [])
-
-@st.cache_data(ttl=10800, show_spinner=False)
 def search_jw(query: str) -> list:
     data = _jw_post(_JW_SEARCH_QUERY, {
         "country":     "IN",
@@ -236,6 +195,61 @@ def search_jw(query: str) -> list:
         "offerFilter": _JW_OFFER_FILTER,
     })
     return (data or {}).get("data", {}).get("popularTitles", {}).get("edges", [])
+
+@st.cache_data(ttl=10800, show_spinner=False)
+def fetch_south_ott_confirmed(
+    lang_codes_tuple: tuple,
+    min_year: int,
+    max_results: int,
+) -> list[dict]:
+    """
+    IMDb-first approach:
+      1. Pull recent South Indian movies from local IMDb parquet (language-accurate).
+      2. Search each title on JustWatch India to confirm OTT availability.
+      3. Return only movies with at least one flatrate/free/ads platform.
+    Cached 3 hours. First load is slow (~1s per candidate); subsequent loads instant.
+    """
+    lang_set = set(lang_codes_tuple)
+    mask = (
+        df_all["language"].isin(lang_set) &
+        (df_all["startYear"] >= min_year) &
+        (df_all["numVotes"] >= 500)
+    )
+    candidates = (
+        df_all[mask]
+        .sort_values(["startYear", "numVotes"], ascending=[False, False])
+        .head(max_results * 5)   # over-fetch so we still hit max_results after JW misses
+    )
+
+    rows: list[dict] = []
+    for _, movie in candidates.iterrows():
+        if len(rows) >= max_results:
+            break
+        edges = search_jw(movie["primaryTitle"])
+        if not edges:
+            continue
+        for edge in edges[:5]:
+            node    = edge.get("node", {})
+            content = node.get("content", {})
+            jw_imdb = (content.get("externalIds") or {}).get("imdbId")
+            if jw_imdb != movie["tconst"]:
+                continue                      # wrong movie — keep scanning
+            offers = node.get("offers", [])
+            plats  = sorted({o["package"]["clearName"] for o in offers if o.get("package")})
+            if not plats:
+                break                         # right movie but not on OTT right now
+            lang_code = movie.get("language", "")
+            lang_disp = LANG_CODE_TO_NAME.get(lang_code, lang_code.upper() if lang_code else "—")
+            rows.append({
+                "Title":       movie["primaryTitle"],
+                "Year":        int(movie["startYear"]),
+                "Language":    lang_disp,
+                "Rating ⭐":   round(movie["averageRating"], 1) if pd.notna(movie.get("averageRating")) else "—",
+                "OTT (India)": ", ".join(plats),
+                "IMDb":        f"https://www.imdb.com/title/{movie['tconst']}/",
+            })
+            break
+    return rows
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -669,11 +683,11 @@ with tab_ott:
 with tab_south:
     st.title("🌟 New on OTT — South Movies")
     st.caption(
-        "Newest South Indian movies on streaming platforms in India · "
-        "Powered by JustWatch · No API key required"
+        "Recent South Indian movies confirmed on streaming in India · "
+        "IMDb for language accuracy · JustWatch for live platform data · No API key required"
     )
 
-    s_col1, s_col2 = st.columns([3, 2])
+    s_col1, s_col2, s_col3 = st.columns([3, 2, 2])
     with s_col1:
         selected_south_langs = st.multiselect(
             "Languages",
@@ -682,56 +696,50 @@ with tab_south:
             key="south_lang_select",
         )
     with s_col2:
-        south_fetch_count = st.select_slider(
-            "Pull from JustWatch",
-            options=[50, 100, 150, 200],
-            value=100,
-            format_func=lambda n: f"Latest {n} OTT titles",
-            key="south_fetch_count",
+        south_min_year = st.select_slider(
+            "Released since",
+            options=[2020, 2021, 2022, 2023, 2024],
+            value=2023,
+            format_func=lambda y: str(y),
+            key="south_min_year",
+        )
+    with s_col3:
+        south_max_results = st.select_slider(
+            "Max results",
+            options=[10, 20, 30, 40],
+            value=20,
+            key="south_max_results",
         )
 
     south_fetch_btn = st.button(
-        "🔄 Load Latest South Releases", type="primary", use_container_width=True, key="south_fetch_btn"
+        "🔄 Load South OTT Movies", type="primary", use_container_width=True, key="south_fetch_btn"
     )
 
     if south_fetch_btn:
         if not selected_south_langs:
             st.warning("Select at least one language.")
         else:
-            selected_codes = {SOUTH_LANG_CODES[l] for l in selected_south_langs}
-
-            with st.spinner("Fetching newest OTT titles from JustWatch India…"):
-                edges = fetch_jw_newest(south_fetch_count)
-
-            if not edges:
-                st.session_state.south_releases = []
-            else:
-                # Convert to rows, enriching from df_all
-                all_rows = _jw_edges_to_rows(edges, df_all)
-
-                # Filter to South languages using the IMDb language column.
-                # _jw_edges_to_rows puts the human-readable name (e.g. "Tamil")
-                # into row["Language"] via LANG_CODE_TO_NAME.
-                south_rows = [
-                    r for r in all_rows
-                    if r.get("Language") in selected_south_langs
-                ]
-
-                st.session_state.south_releases = south_rows
+            lang_codes = tuple(sorted(SOUTH_LANG_CODES[l] for l in selected_south_langs))
+            with st.spinner(
+                "Searching JustWatch India for each candidate… "
+                "first load ~30s · results cached 3 hours"
+            ):
+                south_rows = fetch_south_ott_confirmed(lang_codes, south_min_year, south_max_results)
+            st.session_state.south_releases = south_rows
 
     south_res = st.session_state.south_releases
     if south_res is None:
         st.info(
-            "Click **Load Latest South Releases** to fetch the newest Tamil, Telugu, "
+            "Click **Load South OTT Movies** to find recent Tamil, Telugu, "
             "Malayalam, and Kannada movies currently streaming in India."
         )
     elif not south_res:
         st.warning(
-            "No South Indian movies found in the latest OTT batch. "
-            "Try increasing the pull count or check back later."
+            "No confirmed OTT results for the selected filters. "
+            "Try an earlier 'Released since' year or add more languages."
         )
     else:
-        st.markdown(f"Found **{len(south_res)}** South Indian movies currently on OTT in India")
+        st.markdown(f"**{len(south_res)} South Indian movies** currently on OTT in India")
         col_cfg_south = {"Rating ⭐": st.column_config.NumberColumn(format="%.1f")}
         if any(r["IMDb"].startswith("http") for r in south_res):
             col_cfg_south["IMDb"] = st.column_config.LinkColumn(display_text="IMDb")
@@ -742,7 +750,7 @@ with tab_south:
             column_config=col_cfg_south,
         )
         st.caption(
-            "Source: JustWatch India (newest sort) · Cross-matched with IMDb language data · "
+            "Source: IMDb (language · rating) + JustWatch India (platform availability) · "
             "Flatrate / Free / Ad-supported only · Cached 3 hours"
         )
 
