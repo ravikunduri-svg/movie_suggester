@@ -136,6 +136,7 @@ query SearchOTT(
         offers(country: $country, platform: WEB, filter: $offerFilter) {
           package { clearName }
           monetizationType
+          availableFromTime
         }
       }
     }
@@ -250,6 +251,9 @@ def fetch_south_ott_confirmed(
             plats  = sorted({o["package"]["clearName"] for o in offers if o.get("package")})
             if not plats:
                 break                         # right movie but not on OTT right now
+            # Earliest OTT premiere date across all platforms
+            raw_dates = [o["availableFromTime"][:10] for o in offers if o.get("availableFromTime")]
+            ott_date  = min(raw_dates) if raw_dates else "—"
             lang_code = movie.get("language", "")
             lang_disp = LANG_CODE_TO_NAME.get(lang_code, lang_code.upper() if lang_code else "—")
             rows.append({
@@ -258,6 +262,7 @@ def fetch_south_ott_confirmed(
                 "Language":    lang_disp,
                 "Genres":      movie.get("genres", "—").replace(",", ", "),
                 "Rating ⭐":   round(movie["averageRating"], 1) if pd.notna(movie.get("averageRating")) else "—",
+                "OTT Date":    ott_date,
                 "OTT (India)": ", ".join(plats),
                 "IMDb":        f"https://www.imdb.com/title/{movie['tconst']}/",
             })
@@ -764,19 +769,66 @@ with tab_south:
             "Try an earlier 'Released since' year or add more languages."
         )
     else:
-        st.markdown(f"**{len(south_res)} South Indian movies** currently on OTT in India")
-        col_cfg_south = {"Rating ⭐": st.column_config.NumberColumn(format="%.1f")}
+        # ── Date range filter (client-side, no extra API calls) ──────────────
+        st.divider()
+        today      = date.today()
+        week_start = today - timedelta(days=today.weekday())   # this Monday
+
+        dc1, dc2, dc3 = st.columns([2, 2, 3])
+        with dc1:
+            date_preset = st.radio(
+                "OTT release window",
+                ["This week", "Last week", "Custom", "All"],
+                horizontal=False,
+                key="south_date_preset",
+            )
+        with dc2:
+            if date_preset == "This week":
+                d_from, d_to = week_start, today
+            elif date_preset == "Last week":
+                d_from = week_start - timedelta(days=7)
+                d_to   = week_start - timedelta(days=1)
+            elif date_preset == "Custom":
+                d_from = st.date_input("From", value=week_start, key="south_d_from")
+                d_to   = st.date_input("To",   value=today,      key="south_d_to")
+            else:
+                d_from, d_to = None, None
+        with dc3:
+            if date_preset != "All" and d_from and d_to:
+                st.markdown(
+                    f"**Showing OTT releases:**  \n"
+                    f"`{d_from}` → `{d_to}`  \n"
+                    f"_(movies without a recorded OTT date are listed separately below)_"
+                )
+
+        # Apply filter
+        if date_preset == "All" or not d_from or not d_to:
+            dated   = sorted((r for r in south_res if r["OTT Date"] != "—"), key=lambda r: r["OTT Date"], reverse=True)
+            undated = [r for r in south_res if r["OTT Date"] == "—"]
+            display = dated + undated
+        else:
+            from_s  = str(d_from)
+            to_s    = str(d_to)
+            display  = [r for r in south_res if r["OTT Date"] != "—" and from_s <= r["OTT Date"] <= to_s]
+            undated  = [r for r in south_res if r["OTT Date"] == "—"]
+
+        st.markdown(f"**{len(display)} result(s)** for selected window")
+
+        col_cfg_south = {
+            "Rating ⭐": st.column_config.NumberColumn(format="%.1f"),
+        }
         if any(r["IMDb"].startswith("http") for r in south_res):
             col_cfg_south["IMDb"] = st.column_config.LinkColumn(display_text="IMDb")
-        st.dataframe(
-            south_res,
-            use_container_width=True,
-            hide_index=True,
-            column_config=col_cfg_south,
-        )
+
+        st.dataframe(display, use_container_width=True, hide_index=True, column_config=col_cfg_south)
+
+        if date_preset != "All" and undated:
+            with st.expander(f"{len(undated)} movies without a recorded OTT date"):
+                st.dataframe(undated, use_container_width=True, hide_index=True, column_config=col_cfg_south)
+
         st.caption(
-            "Source: IMDb (language · rating) + JustWatch India (platform availability) · "
-            "Flatrate / Free / Ad-supported only · Cached 3 hours"
+            "OTT Date = earliest availableFromTime across all platforms (JustWatch India) · "
+            "Source: IMDb (language · rating) + JustWatch · Cached 3 hours"
         )
 
 # ═══════════════════════════════════════════════════════════════════════════════
