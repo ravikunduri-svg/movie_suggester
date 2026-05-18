@@ -120,7 +120,7 @@ print(f"\nFetching language data from Wikidata ...")
 lang_map = fetch_all_languages()
 print(f"Total language entries fetched: {len(lang_map):,}")
 
-df["language"] = df["tconst"].map(lang_map).fillna("en")
+df["language"] = df["tconst"].map(lang_map)  # NaN = unknown; do not default to "en"
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 
