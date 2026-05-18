@@ -84,6 +84,13 @@ OTT_FILE = Path(__file__).parent / "data" / "ott_catalog.parquet"
 SOUTH_LANG_OPTIONS = ["Tamil", "Telugu", "Malayalam", "Kannada"]
 SOUTH_LANG_CODES   = {"Tamil": "ta", "Telugu": "te", "Malayalam": "ml", "Kannada": "kn"}
 
+SOUTH_GENRES = [
+    "Any",
+    "Action", "Adventure", "Animation", "Biography", "Comedy",
+    "Crime", "Drama", "Family", "Fantasy", "History",
+    "Horror", "Mystery", "Romance", "Sci-Fi", "Thriller",
+]
+
 _GROQ_KEY = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY", ""))
 
 PAGE_SIZE = 20
@@ -201,12 +208,14 @@ def fetch_south_ott_confirmed(
     lang_codes_tuple: tuple,
     min_year: int,
     max_results: int,
+    genres_tuple: tuple = (),
 ) -> list[dict]:
     """
     IMDb-first approach:
       1. Pull recent South Indian movies from local IMDb parquet (language-accurate).
-      2. Search each title on JustWatch India to confirm OTT availability.
-      3. Return only movies with at least one flatrate/free/ads platform.
+      2. Optionally filter by genres (OR logic — movie must match at least one).
+      3. Search each title on JustWatch India to confirm OTT availability.
+      4. Return only movies with at least one flatrate/free/ads platform.
     Cached 3 hours. First load is slow (~1s per candidate); subsequent loads instant.
     """
     lang_set = set(lang_codes_tuple)
@@ -215,6 +224,9 @@ def fetch_south_ott_confirmed(
         (df_all["startYear"] >= min_year) &
         (df_all["numVotes"] >= 500)
     )
+    if genres_tuple:
+        genre_pattern = "|".join(genres_tuple)
+        mask &= df_all["genres"].str.contains(genre_pattern, na=False)
     candidates = (
         df_all[mask]
         .sort_values(["startYear", "numVotes"], ascending=[False, False])
@@ -244,6 +256,7 @@ def fetch_south_ott_confirmed(
                 "Title":       movie["primaryTitle"],
                 "Year":        int(movie["startYear"]),
                 "Language":    lang_disp,
+                "Genres":      movie.get("genres", "—").replace(",", ", "),
                 "Rating ⭐":   round(movie["averageRating"], 1) if pd.notna(movie.get("averageRating")) else "—",
                 "OTT (India)": ", ".join(plats),
                 "IMDb":        f"https://www.imdb.com/title/{movie['tconst']}/",
@@ -687,7 +700,7 @@ with tab_south:
         "IMDb for language accuracy · JustWatch for live platform data · No API key required"
     )
 
-    s_col1, s_col2, s_col3 = st.columns([3, 2, 2])
+    s_col1, s_col2 = st.columns([3, 3])
     with s_col1:
         selected_south_langs = st.multiselect(
             "Languages",
@@ -696,14 +709,23 @@ with tab_south:
             key="south_lang_select",
         )
     with s_col2:
+        selected_south_genres = st.multiselect(
+            "Genres (leave blank for all)",
+            options=SOUTH_GENRES[1:],   # skip "Any"
+            default=[],
+            key="south_genre_select",
+        )
+
+    s_col3, s_col4 = st.columns([3, 3])
+    with s_col3:
         south_min_year = st.select_slider(
             "Released since",
-            options=[2020, 2021, 2022, 2023, 2024],
-            value=2023,
+            options=[2020, 2021, 2022, 2023, 2024, 2025, 2026],
+            value=2025,
             format_func=lambda y: str(y),
             key="south_min_year",
         )
-    with s_col3:
+    with s_col4:
         south_max_results = st.select_slider(
             "Max results",
             options=[10, 20, 30, 40],
@@ -719,12 +741,15 @@ with tab_south:
         if not selected_south_langs:
             st.warning("Select at least one language.")
         else:
-            lang_codes = tuple(sorted(SOUTH_LANG_CODES[l] for l in selected_south_langs))
+            lang_codes   = tuple(sorted(SOUTH_LANG_CODES[l] for l in selected_south_langs))
+            genres_tuple = tuple(sorted(selected_south_genres))
             with st.spinner(
                 "Searching JustWatch India for each candidate… "
                 "first load ~30s · results cached 3 hours"
             ):
-                south_rows = fetch_south_ott_confirmed(lang_codes, south_min_year, south_max_results)
+                south_rows = fetch_south_ott_confirmed(
+                    lang_codes, south_min_year, south_max_results, genres_tuple
+                )
             st.session_state.south_releases = south_rows
 
     south_res = st.session_state.south_releases
